@@ -45,7 +45,6 @@ fn get_arg_types(inputs: &Punctuated<syn::FnArg, Comma>) -> Vec<&Type> {
             syn::FnArg::Inferred(_) => panic!("inferred function parameters not supported"),
             syn::FnArg::Captured(ref captured) => &captured.ty,
             syn::FnArg::Ignored(ref ty) => ty,
-
         };
         types.push(arg_type);
     }
@@ -208,7 +207,102 @@ fn get_info_fn(func_name: &syn::Ident) -> TokenStream {
             &my_finfo
         }
     )
+}
 
+fn impl_info_for_init(item: &syn::Item) -> TokenStream {
+    let func = if let syn::Item::Fn(func) = item {
+        func
+    } else {
+        panic!("annotation only supported on functions");
+    };
+
+    let func_name = &func.ident;
+    let func_decl = &func.decl;
+
+    if func_decl.variadic.is_some() {
+        panic!("variadic functions (...) not supported")
+    }
+
+    if !func_decl.inputs.is_empty() {
+        panic!("init functions must have no inputs")
+    };
+
+    if func_decl.output != syn::ReturnType::Default {
+        panic!("init functions must have no output")
+    };
+
+    // declare the function
+    let mut function = item.clone().into_token_stream();
+
+    let func_wrapper_name = syn::Ident::new("_PG_init", Span::call_site());
+    let func_info = get_info_fn(&func_wrapper_name);
+    function.extend(func_info);
+
+    // wrap the original function in a pg_wrapper function
+    let func_wrapper = quote!(
+        #[no_mangle]
+        pub extern "C" fn #func_wrapper_name ()  {
+            pg_extend::guard_pg(#func_name)
+        }
+    );
+
+    function.extend(func_wrapper);
+
+    function
+}
+
+fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
+    let func = if let syn::Item::Fn(func) = item {
+        func
+    } else {
+        panic!("annotation only supported on functions");
+    };
+
+    let func_name = &func.ident;
+    let func_decl = &func.decl;
+
+    if func_decl.variadic.is_some() {
+        panic!("variadic functions (...) not supported")
+    }
+
+    if func_decl.output != syn::ReturnType::Default {
+        panic!("bgw functions must have no output")
+    }
+
+    if func_decl.inputs.len() >= 2 {
+        panic!("bgw functions must have 0 or 1 arguments")
+    }
+
+    let inputs = &func_decl.inputs;
+
+    // declare the function
+    let mut function = item.clone().into_token_stream();
+
+    let func_wrapper_name = syn::Ident::new(&format!("bgw_{}", func_name), Span::call_site());
+    let func_info = get_info_fn(&func_wrapper_name);
+    function.extend(func_info);
+
+    let arg_types = get_arg_types(inputs);
+    let get_args_from_datums = extract_arg_data(&arg_types);
+    let func_params = create_function_params(arg_types.len());
+
+    // wrap the original function in a pg_wrapper function
+    let func_wrapper = quote!(
+        #[no_mangle]
+        pub extern "C" fn #func_wrapper_name ()  {
+            unsafe {
+                pg_sys::BackgroundWorkerUnblockSignals();
+            }
+
+            #func_name(#func_params);
+
+            while pg_extend::pg_bgw::wait_latch(10000) & pg_sys::WL_POSTMASTER_DEATH as i32 == 0 {};
+        }
+    );
+
+    function.extend(func_wrapper);
+
+    function
 }
 
 fn impl_info_for_fn(item: &syn::Item) -> TokenStream {
@@ -424,6 +518,38 @@ pub fn pg_foreignwrapper(
 
     // Build the impl
     let expanded: TokenStream = impl_info_for_fdw(&ast);
+
+    // Return the generated impl
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[proc_macro_attribute]
+#[allow(clippy::needless_pass_by_value)]
+pub fn pg_init(
+    _attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    // get a usable token stream
+    let ast: syn::Item = parse_macro_input!(item as syn::Item);
+
+    // Build the impl
+    let expanded: TokenStream = impl_info_for_init(&ast);
+
+    // Return the generated impl
+    proc_macro::TokenStream::from(expanded)
+}
+
+#[proc_macro_attribute]
+#[allow(clippy::needless_pass_by_value)]
+pub fn pg_bgw(
+    _attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
+    // get a usable token stream
+    let ast: syn::Item = parse_macro_input!(item as syn::Item);
+
+    // Build the impl
+    let expanded: TokenStream = impl_info_for_bgw(&ast);
 
     // Return the generated impl
     proc_macro::TokenStream::from(expanded)

@@ -22,3 +22,7 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/lsyscache.h"
+#include "storage/ipc.h"
+#include "storage/latch.h"
+#include "miscadmin.h"
+#include "pgstat.h"

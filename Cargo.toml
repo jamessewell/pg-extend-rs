@@ -8,6 +8,7 @@ members = [
     "examples/adding", 
     "examples/nullable",
     "examples/panicking",
+    "examples/bgw",
     "examples/fdw",
     "examples/fdw-rw",
     "examples/strings",

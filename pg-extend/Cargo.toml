@@ -17,7 +17,7 @@ license = "MIT/Apache-2.0"
 build = "build.rs"
 
 [features]
-default = ["postgres-10"]
+default = ["postgres-11"]
 postgres-9 = []
 postgres-10 = []
 postgres-11 = []
@@ -26,6 +26,7 @@ postgres-11 = []
 pg_allocator = []
 
 [dependencies]
+inventory = "0.1.3"
 
 [build-dependencies]
 bindgen = "0.48"

@@ -20,7 +20,9 @@ pub mod pg_bool;
 pub mod pg_datum;
 pub mod pg_error;
 
+#[macro_use]
 pub mod log;
+pub mod pg_bgw;
 pub mod pg_fdw;
 
 pub mod pg_sys;
@@ -129,20 +131,24 @@ pub fn register_panic_handler() {
 ///
 /// See the man pages for info on setjmp http://man7.org/linux/man-pages/man3/setjmp.3.html
 #[inline(never)]
-pub(crate) unsafe fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
+pub fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
     // setup the check protection
-    let original_exception_stack: *mut pg_sys::sigjmp_buf = pg_sys::PG_exception_stack;
-    let mut local_exception_stack: pg_sys::sigjmp_buf = mem::uninitialized();
-    let jumped = pg_sys::sigsetjmp(
-        // grab a mutable reference, cast to a mutabl pointr, then case to the expected erased pointer type
-        &mut local_exception_stack as *mut pg_sys::sigjmp_buf as *mut _,
-        1,
-    );
+    let original_exception_stack: *mut pg_sys::sigjmp_buf = unsafe { pg_sys::PG_exception_stack };
+    let mut local_exception_stack: pg_sys::sigjmp_buf = unsafe { mem::uninitialized() };
+    let jumped = unsafe {
+        pg_sys::sigsetjmp(
+            // grab a mutable reference, cast to a mutabl pointr, then case to the expected erased pointer type
+            &mut local_exception_stack as *mut pg_sys::sigjmp_buf as *mut _,
+            1,
+        )
+    };
     // now that we have the local_exception_stack, we set that for any PG longjmps...
 
     if jumped != 0 {
         notice!("PG longjmped: {}", jumped);
-        pg_sys::PG_exception_stack = original_exception_stack;
+        unsafe {
+            pg_sys::PG_exception_stack = original_exception_stack;
+        }
 
         // The C Panicked!, handling control to Rust Panic handler
         compiler_fence(Ordering::SeqCst);
@@ -150,14 +156,18 @@ pub(crate) unsafe fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
     }
 
     // replace the exception stack with ours to jump to the above point
-    pg_sys::PG_exception_stack = &mut local_exception_stack as *mut _;
+    unsafe {
+        pg_sys::PG_exception_stack = &mut local_exception_stack as *mut _;
+    }
 
     // enforce that the setjmp is not reordered, though that's probably unlikely...
     compiler_fence(Ordering::SeqCst);
     let result = f();
 
     compiler_fence(Ordering::SeqCst);
-    pg_sys::PG_exception_stack = original_exception_stack;
+    unsafe {
+        pg_sys::PG_exception_stack = original_exception_stack;
+    }
 
     result
 }
