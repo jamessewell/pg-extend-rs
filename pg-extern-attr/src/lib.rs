@@ -269,6 +269,7 @@ fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
         panic!("bgw functions must have no output")
     }
 
+    // TODO: actually a 1 argument version must be a Datum
     if func_decl.inputs.len() >= 2 {
         panic!("bgw functions must have 0 or 1 arguments")
     }
@@ -293,6 +294,7 @@ fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
             unsafe {
                 pg_sys::BackgroundWorkerUnblockSignals();
             }
+            #get_args_from_datums
 
             #func_name(#func_params);
 
@@ -385,7 +387,7 @@ fn impl_info_for_fn(item: &syn::Item) -> TokenStream {
                     // The Rust code paniced, we need to recover to Postgres via a longjump
                     //   A postgres logging error of Error will do this for us.
                     compiler_fence(Ordering::SeqCst);
-                    let level = pg_extend::pg_error::Level::Error;
+                    let level = pg_extend::log::Level::Error; 
 
                     if let Some(msg) = err.downcast_ref::<&'static str>() {
                         error!("panic executing Rust '{}': {}", stringify!(#func_name), msg);

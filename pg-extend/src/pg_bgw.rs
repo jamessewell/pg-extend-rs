@@ -4,28 +4,42 @@ use crate::{error, pg_datum, pg_sys, pg_type, warn};
 
 pub static mut prev_shmem_startup_hook: Option<unsafe extern "C" fn()> = None;
 
-pub struct BackgroundWorker {
-    pub bgw_name: String,
-    pub bgw_type: String,
-    pub bgw_flags: i32,
-    pub bgw_start_time: pg_sys::BgWorkerStartTime,
-    pub bgw_restart_time: i32,
-    pub bgw_library_name: String,
-    pub bgw_function_name: String,
-    pub bgw_main_arg: pg_sys::Datum,
-    pub bgw_extra: String,
-    pub bgw_notify_pid: pg_sys::pid_t,
+bitflags! {
+    pub struct BGW_Flags: i32 {
+        const BGWORKER_NONE = 0x00;
+        const BGWORKER_SHMEM_ACCESS = 0x01;
+        const BGWORKER_BACKEND_DATABASE_CONNECTION = 0x02;
+    }
 }
 
-impl pg_sys::BackgroundWorker {}
+pub enum BgWorkerStartTime {
+    PostmasterStart = 0,
+    ConsistentState = 1,
+    RecoveryFinished = 2
+}
+
+const BGW_NEVER_RESTART:i32 = -1;
+
+pub struct BackgroundWorker {
+    bgw_name: String,
+    bgw_type: String,
+    bgw_flags: BGW_Flags,
+    bgw_start_time: BgWorkerStartTime,
+    bgw_restart_time: i32,
+    bgw_library_name: String,
+    bgw_function_name: String,
+    bgw_main_arg: pg_sys::Datum,
+    bgw_extra: String,
+    bgw_notify_pid: pg_sys::pid_t,
+}
 
 impl BackgroundWorker {
     pub fn new(name: &str) -> BackgroundWorker {
         BackgroundWorker {
             bgw_name: name.to_string(),
             bgw_type: name.to_string(),
-            bgw_flags: pg_sys::BGWORKER_SHMEM_ACCESS as i32,
-            bgw_start_time: pg_sys::BgWorkerStartTime_BgWorkerStart_RecoveryFinished,
+            bgw_flags: BGW_Flags::BGWORKER_NONE,
+            bgw_start_time: BgWorkerStartTime::PostmasterStart,
             bgw_restart_time: 10,
             bgw_library_name: name.to_string(),
             bgw_function_name: format!("bgw_{}", name),
@@ -35,8 +49,23 @@ impl BackgroundWorker {
         }
     }
 
-    pub fn set_function(mut self: Self, input: &str) -> Self {
-        self.bgw_function_name = format!("bgw_{}", input);
+    pub fn set_type(mut self: Self, input: &str) -> Self {
+        self.bgw_type = input.to_string();
+        self
+    }
+
+    pub fn set_flags(mut self: Self, input: BGW_Flags) -> Self {
+        self.bgw_flags = input;
+        self
+    }
+
+    pub fn set_start_time(mut self: Self, input: BgWorkerStartTime) -> Self {
+        self.bgw_start_time = input;
+        self
+    }
+
+    pub fn set_restart_time(mut self: Self, input: i32) -> Self {
+        self.bgw_restart_time = input;
         self
     }
 
@@ -45,12 +74,34 @@ impl BackgroundWorker {
         self
     }
 
+    pub fn set_function(mut self: Self, input: &str) -> Self {
+        self.bgw_function_name = format!("bgw_{}", input);
+        self
+    }
+
+    pub fn set_argument(mut self: Self, input: pg_sys::Datum) -> Self {
+        self.bgw_main_arg = input;
+        self
+    }
+
+    pub fn set_extra(mut self: Self, input: &str) -> Self {
+        self.bgw_extra = input.to_string();
+        self
+    }
+
+    pub fn set_notify_pid(mut self: Self, input: i32) -> Self {
+        self.bgw_notify_pid = input;
+        self
+    }
+
+
+
     pub fn load(self: Self) {
         let mut bgw = pg_sys::BackgroundWorker {
             bgw_name: RpgffiChar96::from(&self.bgw_name[..]).0,
             bgw_type: RpgffiChar96::from(&self.bgw_type[..]).0,
-            bgw_flags: self.bgw_flags,
-            bgw_start_time: self.bgw_start_time,
+            bgw_flags: self.bgw_flags.bits(),
+            bgw_start_time: self.bgw_start_time as u32,
             bgw_restart_time: self.bgw_restart_time,
             bgw_library_name: RpgffiChar96::from(&self.bgw_library_name[..]).0,
             bgw_function_name: RpgffiChar96::from(&self.bgw_function_name[..]).0,

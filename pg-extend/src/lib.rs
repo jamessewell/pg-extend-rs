@@ -8,6 +8,9 @@
 //! Postgres extension library for Rust.
 #![warn(missing_docs)]
 
+#[macro_use]
+extern crate bitflags;
+
 use std::mem;
 use std::os::raw::c_int;
 use std::sync::atomic::compiler_fence;
@@ -24,6 +27,7 @@ pub mod pg_error;
 pub mod log;
 pub mod pg_bgw;
 pub mod pg_fdw;
+
 
 pub mod pg_sys;
 pub mod pg_type;

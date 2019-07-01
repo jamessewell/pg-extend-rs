@@ -61,7 +61,7 @@ impl ForeignRow for MyRow {
 }
 
 impl Iterator for CacheFDW {
-    type Item = Box<ForeignRow>;
+    type Item = Box<dyn ForeignRow>;
     fn next(&mut self) -> Option<Self::Item> {
         match self.inner.pop() {
             None => None,
@@ -102,7 +102,7 @@ CREATE FOREIGN TABLE {schema}.mytable (
         Some(vec!["key".into()])
     }
 
-    fn update(&self, new_row: &Tuple, indices: &Tuple) -> Option<Box<ForeignRow>> {
+    fn update(&self, new_row: &Tuple, indices: &Tuple) -> Option<Box<dyn ForeignRow>> {
         let mut c = get_cache().write().unwrap();
         let key = indices.get("key");
         let value = new_row.get("value");
@@ -121,12 +121,12 @@ CREATE FOREIGN TABLE {schema}.mytable (
         }
     }
 
-    fn insert(&self, new_row: &Tuple) -> Option<Box<ForeignRow>> {
+    fn insert(&self, new_row: &Tuple) -> Option<Box<dyn ForeignRow>> {
         // Since we only use one field from each, these methods are equivalent
         self.update(new_row, new_row)
     }
 
-    fn delete(&self, indices: &Tuple) -> Option<Box<ForeignRow>> {
+    fn delete(&self, indices: &Tuple) -> Option<Box<dyn ForeignRow>> {
         let mut c = get_cache().write().unwrap();
         let key = indices.get("key");
 
