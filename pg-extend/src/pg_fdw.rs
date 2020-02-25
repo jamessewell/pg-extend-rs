@@ -1,38 +1,51 @@
 //! A trait for implementing a foreign data wrapper.
-//! Adapted and transalated from
-//! https://github.com/slaught/dummy_fdw/blob/master/dummy_data.c
-//! and
-//! https://bitbucket.org/adunstan/rotfang-fdw/src/ca21c2a2e5fa6e1424b61bf0170adb3ab4ae68e7/src/rotfang_fdw.c?at=master&fileviewer=file-view-default
+//!
+//! Adapted and transalated from https://github.com/slaught/dummy_fdw/blob/master/dummy_data.c
+//! and https://bitbucket.org/adunstan/rotfang-fdw/src/ca21c2a2e5fa6e1424b61bf0170adb3ab4ae68e7/src/rotfang_fdw.c?at=master&fileviewer=file-view-default
 //! For use with `#[pg_foreignwrapper]` from pg-extend-attr
 
-use crate::{pg_datum, pg_sys, pg_type, error, warn};
+// FDW on PostgreSQL 11+ is not supported. :(
+// If anyone tries to enable "fdw" feature with newer Postgres, throw error.
+#![cfg(not(feature = "postgres-12"))]
+#![cfg(feature = "fdw")]
+
 use std::boxed::Box;
 use std::collections::HashMap;
-use std::ffi::{CStr,CString};
+use std::ffi::{CStr, CString};
+
+use crate::pg_alloc::PgAllocator;
+use crate::{error, pg_datum, pg_sys, pg_type, warn};
 
 /// A map from column names to data types. Tuple order is not currently
 /// preserved, it may be in the future.
-pub type Tuple = HashMap<String, pg_datum::PgDatum>;
+pub type Tuple<'mc> = HashMap<String, pg_datum::PgDatum<'mc>>;
+
+/// Struct used to wrap the FDW metadata
+#[derive(Debug)]
+pub struct ForeignTableMetadata {
+    /// Map that holds the options provided when creating the foreign server
+    pub server_opts: OptionMap,
+    /// Map that holds the options provided when creating the foreign table
+    pub table_opts: OptionMap,
+    /// Foreign table's name
+    pub table_name: String,
+}
 
 // TODO: can we avoid this box?
 /// The foreign data wrapper itself. The next() method of this object
 /// is responsible for creating row objects to return data.
 /// The object is only active for the lifetime of a query, so it
 /// is not an appropriate place to put caching or long-running connections.
-pub trait ForeignData: Iterator<Item = Box<ForeignRow>> {
+pub trait ForeignData: Iterator<Item = Box<dyn ForeignRow>> {
     /// Called when a scan is initiated. Note that any heavy set up
     /// such as making connections or allocating memory should not
     /// happen in this step, but on the first call to next()
-    fn begin(server_opts: OptionMap, table_opts: OptionMap, table_name: String) -> Self;
+    fn begin(table_metadata: &ForeignTableMetadata) -> Self;
 
     /// If defined, these columns will always be present in the tuple. This can
     /// be useful for update and delete operations, which otherwise might be
     /// missing key fields.
-    fn index_columns(
-        _server_opts: OptionMap,
-        _table_opts: OptionMap,
-        _table_name: String,
-    ) -> Option<Vec<String>> {
+    fn index_columns(_table_metadata: &ForeignTableMetadata) -> Option<Vec<String>> {
         None
     }
 
@@ -46,7 +59,12 @@ pub trait ForeignData: Iterator<Item = Box<ForeignRow>> {
     /// Remote schema can be used or ignored.
     /// At present all other options passed in are ignored, in the future this
     /// method might take options for which tables to import.
-    fn schema(_server_opts: OptionMap, _server_name: String, _remote_schema: String, _local_schema: String) -> Option<Vec<String>> {
+    fn schema(
+        _server_opts: OptionMap,
+        _server_name: String,
+        _remote_schema: String,
+        _local_schema: String,
+    ) -> Option<Vec<String>> {
         None
     }
 
@@ -55,7 +73,11 @@ pub trait ForeignData: Iterator<Item = Box<ForeignRow>> {
     /// specified by index_columns. Do not assume columns present in indices
     /// were present in the UPDATE statement.
     /// Returns the updated row, or None if no update occured.
-    fn update(&self, _new_row: &Tuple, _indices: &Tuple) -> Option<Box<ForeignRow>> {
+    fn update<'mc>(
+        &self,
+        _new_row: &Tuple<'mc>,
+        _indices: &Tuple<'mc>,
+    ) -> Option<Box<dyn ForeignRow>> {
         error!("Table does not support update");
         None
     }
@@ -63,7 +85,7 @@ pub trait ForeignData: Iterator<Item = Box<ForeignRow>> {
     /// Method for INSERTs. Takes in new_row (which is a mapping of column
     /// names to values). Returns the inserted row, or None if no insert
     /// occurred.
-    fn insert(&self, _new_row: &Tuple) -> Option<Box<ForeignRow>> {
+    fn insert<'mc>(&self, _new_row: &Tuple<'mc>) -> Option<Box<dyn ForeignRow>> {
         error!("Table does not support insert");
         None
     }
@@ -71,7 +93,7 @@ pub trait ForeignData: Iterator<Item = Box<ForeignRow>> {
     /// Method for DELETEs. Takes in a indices is the same, which consists of columns
     /// specified by index_columns.
     /// Returns the deleted row, or None if no row was deleted.
-    fn delete(&self, _indices: &Tuple) -> Option<Box<ForeignRow>> {
+    fn delete<'mc>(&self, _indices: &Tuple<'mc>) -> Option<Box<dyn ForeignRow>> {
         error!("Table does not support delete");
         None
     }
@@ -133,7 +155,7 @@ impl<T: ForeignData> ForeignWrapper<T> {
                 base_rel,
                 std::ptr::null_mut(),
                 (*base_rel).rows,
-                // TODO real costs
+                // TODO: real costs
                 pg_sys::Cost::from(10),
                 pg_sys::Cost::from(0),
                 std::ptr::null_mut(),
@@ -174,15 +196,10 @@ impl<T: ForeignData> ForeignWrapper<T> {
         node: *mut pg_sys::ForeignScanState,
         _eflags: std::os::raw::c_int,
     ) {
-        // TODO real server options
-        let server_opts = HashMap::new();
-        // TODO real table options
-        let table_opts = HashMap::new();
-
         let rel = *(*node).ss.ss_currentRelation;
-        let name = Self::get_table_name(&rel);
+        let table_metadata = Self::get_table_metadata(&rel);
         let wrapper = Box::new(Self {
-            state: T::begin(server_opts, table_opts, name),
+            state: T::begin(&table_metadata),
         });
 
         (*node).fdw_state = Box::into_raw(wrapper) as *mut std::os::raw::c_void;
@@ -199,41 +216,86 @@ impl<T: ForeignData> ForeignWrapper<T> {
         }
     }
 
-    unsafe fn get_table_name(rel: &pg_sys::RelationData) -> String {
+    // TODO: We need a way to cache the resulting metadata to reduce the cost of this function
+    unsafe fn get_table_metadata(rel: &pg_sys::RelationData) -> ForeignTableMetadata {
         let table = pg_sys::GetForeignTable(rel.rd_id);
+        let server = pg_sys::GetForeignServer((*table).serverid);
+
+        let server_opts = Self::get_options((*server).options);
+        let table_opts = Self::get_options((*table).options);
         let raw_name = pg_sys::get_rel_name((*table).relid);
 
-        let cname = std::ffi::CStr::from_ptr(raw_name);
-        match cname.to_str() {
+        let table_name = match CStr::from_ptr(raw_name).to_str() {
             Ok(name) => name.into(),
             Err(err) => {
                 error!("Unicode error {}", err);
                 String::new()
             }
+        };
+
+        ForeignTableMetadata {
+            server_opts,
+            table_opts,
+            table_name,
         }
     }
 
+    // WARNING: this function expects a `List` from either `ForeignTable::options` or `ForeignServer::options`.
+    // Do not use for anything else as it assumes that the list contains elements that can be casted to `DefElem`
+    // whose `arg` param can be casted to a string `Value`
+    unsafe fn get_options(options: *mut pg_sys::List) -> OptionMap {
+        if options.is_null() {
+            return HashMap::new();
+        }
 
-    fn get_field(
+        let mut options_map = HashMap::new();
+        for i in 0..((*options).length) {
+            let ptr_value = pg_sys::list_nth(options, i) as *mut pg_sys::DefElem;
+
+            match CStr::from_ptr((*ptr_value).defname).to_str() {
+                Ok(key) => {
+                    #[allow(clippy::cast_ptr_alignment)]
+                    let arg = (*((*ptr_value).arg as *mut pg_sys::Value)).val.str;
+                    let value = match CStr::from_ptr(arg).to_str() {
+                        Ok(v) => v.into(),
+                        Err(err) => {
+                            error!("Unicode error {}", err);
+                            String::new()
+                        }
+                    };
+
+                    options_map.insert(key.into(), value);
+                }
+                Err(err) => error!("Unicode error {}", err),
+            }
+        }
+
+        options_map
+    }
+
+    fn get_field<'mc>(
+        _memory_context: &'mc PgAllocator,
         attr: &pg_sys::FormData_pg_attribute,
-        row: &ForeignRow,
-    ) -> Result<Option<pg_datum::PgDatum>, String> {
+        row: &'mc dyn ForeignRow,
+    ) -> Result<Option<pg_datum::PgDatum<'mc>>, String> {
         let name = Self::name_to_string(attr.attname);
         // let typ = attr.atttypid;
-        // TODO not fake
+        // TODO: not fake
         let typ = pg_type::PgType::Text;
-        // TODO get options
+        // TODO: get options
         let opts = HashMap::new();
         row.get_field(&name, typ, opts).map_err(|e| e.into())
     }
 
-    fn tts_to_hashmap(slot: *mut pg_sys::TupleTableSlot, tupledesc: &pg_sys::tupleDesc) -> Tuple {
+    fn tts_to_hashmap<'mc>(
+        memory_context: &'mc PgAllocator,
+        slot: *mut pg_sys::TupleTableSlot,
+        tupledesc: &pg_sys::tupleDesc,
+    ) -> Tuple<'mc> {
         let attrs = unsafe { Self::tupdesc_attrs(tupledesc) };
 
         // Make sure the slot is fully populated
-        unsafe {
-            pg_sys::slot_getallattrs(slot)
-        }
+        unsafe { pg_sys::slot_getallattrs(slot) }
 
         let data: &[pg_sys::Datum] =
             unsafe { std::slice::from_raw_parts((*slot).tts_values, (*slot).tts_nvalid as usize) };
@@ -244,8 +306,8 @@ impl<T: ForeignData> ForeignWrapper<T> {
         let mut t = HashMap::new();
 
         for i in 0..(attrs.len().min(data.len())) {
-            let name = Self::name_to_string(unsafe {(*attrs[i]).attname});
-            let data = pg_datum::PgDatum::from_raw(data[i], isnull[i]);
+            let name = Self::name_to_string(unsafe { (*attrs[i]).attname });
+            let data = unsafe { pg_datum::PgDatum::from_raw(memory_context, data[i], isnull[i]) };
             t.insert(name, data);
         }
 
@@ -270,6 +332,9 @@ impl<T: ForeignData> ForeignWrapper<T> {
     unsafe extern "C" fn iterate_foreign_scan(
         node: *mut pg_sys::ForeignScanState,
     ) -> *mut pg_sys::TupleTableSlot {
+        // TODO: is this the correct memory context?
+        let memory_context = PgAllocator::current_context();
+
         let mut wrapper = Box::from_raw((*node).fdw_state as *mut Self);
         let slot = (*node).ss.ss_ScanTupleSlot;
 
@@ -286,7 +351,7 @@ impl<T: ForeignData> ForeignWrapper<T> {
             let mut isnull = vec![pgbool!(true); attrs.len()];
             for (i, pattr) in attrs.iter().enumerate() {
                 // TODO: There must be a better way to do this?
-                let result = Self::get_field(&(**pattr), &(*row));
+                let result = Self::get_field(&memory_context, &(**pattr), &(*row));
                 match result {
                     Err(err) => {
                         warn!("{}", err);
@@ -337,28 +402,18 @@ impl<T: ForeignData> ForeignWrapper<T> {
     unsafe extern "C" fn add_foreign_update_targets(
         parsetree: *mut pg_sys::Query,
         _target_rte: *mut pg_sys::RangeTblEntry,
-        target_relation: pg_sys::Relation
+        target_relation: pg_sys::Relation,
     ) {
-        // TODO real server options
-        let server_opts = HashMap::new();
-        // TODO real table options
-        let table_opts = HashMap::new();
+        let table_metadata = Self::get_table_metadata(&*target_relation);
 
-        let table_name = Self::get_table_name(&*target_relation);
-
-        if let Some(keys) = T::index_columns(
-            server_opts,
-            table_opts,
-            table_name
-        ) {
-
+        if let Some(keys) = T::index_columns(&table_metadata) {
             // Build a map of column names to attributes and column index
             let attrs: HashMap<String, (&pg_sys::Form_pg_attribute, usize)> =
                 Self::tupdesc_attrs(&*(*target_relation).rd_att)
-                .iter()
-                .enumerate()
-                .map(|(idx, rel)| (Self::name_to_string((**rel).attname), (rel, idx)))
-                .collect();
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, rel)| (Self::name_to_string((**rel).attname), (rel, idx)))
+                    .collect();
 
             for key in keys {
                 // find the matching column
@@ -366,7 +421,7 @@ impl<T: ForeignData> ForeignWrapper<T> {
                     Some((attr, idx)) => (*(*attr), idx),
                     None => {
                         error!("Table has no such key {}", key);
-                        continue
+                        continue;
                     }
                 };
 
@@ -376,27 +431,24 @@ impl<T: ForeignData> ForeignWrapper<T> {
                     (*attr).atttypid,
                     (*attr).atttypmod,
                     0 as pg_sys::Oid, // InvalidOid
-                    0
+                    0,
                 );
 
                 // TODO: error handling
 
                 let ckey = std::ffi::CString::new(key).unwrap();
                 let list = (*parsetree).targetList;
-                let list_size = if list.is_null() {
-                    0
-                } else {
-                    (*list).length
-                };
+                let list_size = if list.is_null() { 0 } else { (*list).length };
 
                 let tle = pg_sys::makeTargetEntry(
                     var as *mut pg_sys::Expr,
                     (list_size + 1) as i16,
                     pg_sys::pstrdup(ckey.as_ptr()),
-                    pgbool!(true)
+                    pgbool!(true),
                 );
 
-                (*parsetree).targetList = pg_sys::lappend((*parsetree).targetList, tle as *mut std::ffi::c_void)
+                (*parsetree).targetList =
+                    pg_sys::lappend((*parsetree).targetList, tle as *mut std::ffi::c_void)
             }
         }
     }
@@ -408,15 +460,10 @@ impl<T: ForeignData> ForeignWrapper<T> {
         _subplan_index: i32,
         _eflags: i32,
     ) {
-        // TODO real server options
-        let server_opts = HashMap::new();
-        // TODO real table options
-        let table_opts = HashMap::new();
-
         let rel = *(*rinfo).ri_RelationDesc;
-        let name = Self::get_table_name(&rel);
+        let table_metadata = Self::get_table_metadata(&rel);
         let wrapper = Box::new(Self {
-            state: T::begin(server_opts, table_opts, name),
+            state: T::begin(&table_metadata),
         });
 
         (*rinfo).ri_FdwState = Box::into_raw(wrapper) as *mut std::ffi::c_void;
@@ -428,10 +475,17 @@ impl<T: ForeignData> ForeignWrapper<T> {
         slot: *mut pg_sys::TupleTableSlot,
         plan_slot: *mut pg_sys::TupleTableSlot,
     ) -> *mut pg_sys::TupleTableSlot {
+        // TODO: is this the correct memory context?
+        let memory_context = PgAllocator::current_context();
+
         let wrapper = Box::from_raw((*rinfo).ri_FdwState as *mut Self);
 
-        let fields = Self::tts_to_hashmap(slot, &*(*slot).tts_tupleDescriptor);
-        let fields_with_index = Self::tts_to_hashmap(plan_slot, &*(*plan_slot).tts_tupleDescriptor);
+        let fields = Self::tts_to_hashmap(&memory_context, slot, &*(*slot).tts_tupleDescriptor);
+        let fields_with_index = Self::tts_to_hashmap(
+            &memory_context,
+            plan_slot,
+            &*(*plan_slot).tts_tupleDescriptor,
+        );
         let result = (*wrapper).state.update(&fields, &fields_with_index);
 
         if result.is_none() {
@@ -448,9 +502,16 @@ impl<T: ForeignData> ForeignWrapper<T> {
         slot: *mut pg_sys::TupleTableSlot,
         plan_slot: *mut pg_sys::TupleTableSlot,
     ) -> *mut pg_sys::TupleTableSlot {
+        // TODO: is this the correct memory context?
+        let memory_context = PgAllocator::current_context();
+
         let wrapper = Box::from_raw((*rinfo).ri_FdwState as *mut Self);
 
-        let fields_with_index = Self::tts_to_hashmap(plan_slot, &*(*plan_slot).tts_tupleDescriptor);
+        let fields_with_index = Self::tts_to_hashmap(
+            &memory_context,
+            plan_slot,
+            &*(*plan_slot).tts_tupleDescriptor,
+        );
 
         let result = (*wrapper).state.delete(&fields_with_index);
 
@@ -471,10 +532,13 @@ impl<T: ForeignData> ForeignWrapper<T> {
         slot: *mut pg_sys::TupleTableSlot,
         _plan_slot: *mut pg_sys::TupleTableSlot,
     ) -> *mut pg_sys::TupleTableSlot {
+        // TODO: is this the correct memory context?
+        let memory_context = PgAllocator::current_context();
+
         let wrapper = Box::from_raw((*rinfo).ri_FdwState as *mut Self);
 
         let tupledesc = (*(*rinfo).ri_RelationDesc).rd_att;
-        let fields = Self::tts_to_hashmap(slot, &*tupledesc);
+        let fields = Self::tts_to_hashmap(&memory_context, slot, &*tupledesc);
 
         let result = (*wrapper).state.insert(&fields);
 
@@ -491,9 +555,9 @@ impl<T: ForeignData> ForeignWrapper<T> {
 
     unsafe extern "C" fn import_foreign_schema(
         stmt: *mut pg_sys::ImportForeignSchemaStmt,
-        _server_oid: pg_sys::Oid
+        _server_oid: pg_sys::Oid,
     ) -> *mut pg_sys::List {
-        // TODO real server opts
+        // TODO: real server opts
         let server_opts = HashMap::new();
 
         let server_name_cstr = CStr::from_ptr((*stmt).server_name);
@@ -519,7 +583,6 @@ impl<T: ForeignData> ForeignWrapper<T> {
             let dup = pg_sys::pstrdup(cstmt.as_ptr()) as *mut std::ffi::c_void;
             list = pg_sys::lappend(list, dup);
         }
-
 
         list
     }

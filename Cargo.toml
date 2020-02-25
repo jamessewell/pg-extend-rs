@@ -5,13 +5,16 @@ debug = true
 members = [
     "pg-extend", 
     "pg-extern-attr", 
-    "examples/adding", 
+    "examples/adding",
+# Examples disabled because FDW support broken with PostgreSQL 11+.
+# See https://github.com/bluejekyll/pg-extend-rs/issues/49
+#    "examples/fdw",
+#    "examples/fdw-rw",
+    "examples/logging",
+    "examples/memory_context",
     "examples/nullable",
     "examples/panicking",
-    #"examples/bgw",
-    "examples/fdw",
-    "examples/fdw-rw",
+    "examples/bgw",
     "examples/strings",
-    "examples/logging",
     "integration-tests",
 ]

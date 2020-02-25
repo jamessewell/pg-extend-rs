@@ -5,6 +5,7 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+#include "stdbool.h"
 #include "postgres.h"
 #include "postgres_ext.h"
 #include "access/relscan.h"
@@ -16,6 +17,7 @@
 #include "lib/stringinfo.h"
 #include "nodes/makefuncs.h"
 #include "nodes/pg_list.h"
+#include "nodes/memnodes.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/planmain.h"
 #include "optimizer/restrictinfo.h"
@@ -26,3 +28,4 @@
 #include "storage/latch.h"
 #include "miscadmin.h"
 #include "pgstat.h"
+#include "utils/palloc.h"

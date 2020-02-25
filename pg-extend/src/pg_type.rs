@@ -1,84 +1,86 @@
 //! Postgres type definitions
 
+use crate::native::Text;
+
 /// See https://www.postgresql.org/docs/11/xfunc-c.html#XFUNC-C-TYPE-TABLE
 ///
 /// TODO: it would be cool to share code with the sfackler/rust-postgres project
 /// though, that is converting from NetworkByte order, and this is all NativeByte order?
 #[derive(Clone, Copy)]
 pub enum PgType {
-    /// abstime 	AbsoluteTime 	utils/nabstime.h
+    /// abstime  AbsoluteTime  utils/nabstime.h
     AbsoluteTime,
-    /// bigint (int8) 	int64 	postgres.h
+    /// bigint (int8)  int64  postgres.h
     BigInt,
-    /// bigint (int8) 	int64 	postgres.h
+    /// bigint (int8)  int64  postgres.h
     Int8,
-    /// boolean 	bool 	postgres.h (maybe compiler built-in)
+    /// boolean  bool  postgres.h (maybe compiler built-in)
     Boolean,
-    /// box 	BOX* 	utils/geo_decls.h
+    /// box  BOX*  utils/geo_decls.h
     GeoBox,
-    /// bytea 	bytea* 	postgres.h
+    /// bytea  bytea*  postgres.h
     ByteA,
-    /// "char" 	char 	(compiler built-in)
+    /// "char"  char  (compiler built-in)
     Char,
-    /// character 	BpChar* 	postgres.h
+    /// character  BpChar*  postgres.h
     Character,
-    /// cid 	CommandId 	postgres.h
+    /// cid  CommandId  postgres.h
     CommandId,
-    /// date 	DateADT 	utils/date.h
+    /// date  DateADT  utils/date.h
     Date,
-    /// smallint (int2) 	int16 	postgres.h
+    /// smallint (int2)  int16  postgres.h
     SmallInt,
-    /// smallint (int2) 	int16 	postgres.h
+    /// smallint (int2)  int16  postgres.h
     Int2,
-    /// int2vector 	int2vector* 	postgres.h
+    /// int2vector  int2vector*  postgres.h
     Int2Vector,
-    /// integer (int4) 	int32 	postgres.h
+    /// integer (int4)  int32  postgres.h
     Integer,
-    /// integer (int4) 	int32 	postgres.h
+    /// integer (int4)  int32  postgres.h
     Int4,
-    /// real (float4) 	float4* 	postgres.h
+    /// real (float4)  float4*  postgres.h
     Real,
-    /// real (float4) 	float4* 	postgres.h
+    /// real (float4)  float4*  postgres.h
     Float4,
-    /// double precision (float8) 	float8* 	postgres.h
+    /// double precision (float8)  float8*  postgres.h
     DoublePrecision,
-    /// double precision (float8) 	float8* 	postgres.h
+    /// double precision (float8)  float8*  postgres.h
     Float8,
-    /// interval 	Interval* 	datatype/timestamp.h
+    /// interval  Interval*  datatype/timestamp.h
     Interval,
-    /// lseg 	LSEG* 	utils/geo_decls.h
+    /// lseg  LSEG*  utils/geo_decls.h
     Lseg,
-    /// name 	Name 	postgres.h
+    /// name  Name  postgres.h
     Name,
-    /// oid 	Oid 	postgres.h
+    /// oid  Oid  postgres.h
     Oid,
-    /// oidvector 	oidvector* 	postgres.h
+    /// oidvector  oidvector*  postgres.h
     OidVector,
-    /// path 	PATH* 	utils/geo_decls.h
+    /// path  PATH*  utils/geo_decls.h
     Path,
-    /// point 	POINT* 	utils/geo_decls.h
+    /// point  POINT*  utils/geo_decls.h
     Point,
-    /// regproc 	regproc 	postgres.h
+    /// regproc  regproc  postgres.h
     RegProc,
-    /// reltime 	RelativeTime 	utils/nabstime.h
+    /// reltime  RelativeTime  utils/nabstime.h
     RelativeTime,
-    /// text 	text* 	postgres.h
+    /// text  text*  postgres.h
     Text,
-    /// tid 	ItemPointer 	storage/itemptr.h
+    /// tid  ItemPointer  storage/itemptr.h
     ItemPointer,
-    /// time 	TimeADT 	utils/date.h
+    /// time  TimeADT  utils/date.h
     Time,
-    /// time with time zone 	TimeTzADT 	utils/date.h
+    /// time with time zone  TimeTzADT  utils/date.h
     TimeWithTimeZone,
-    /// timestamp 	Timestamp* 	datatype/timestamp.h
+    /// timestamp  Timestamp*  datatype/timestamp.h
     Timestamp,
-    /// tinterval 	TimeInterval 	utils/nabstime.h
+    /// tinterval  TimeInterval  utils/nabstime.h
     TimeInterval,
-    /// varchar 	VarChar* 	postgres.h
+    /// varchar  VarChar*  postgres.h
     VarChar,
     /// void
     Void,
-    /// xid 	TransactionId 	postgres.h
+    /// xid  TransactionId  postgres.h
     TransactionId,
 }
 
@@ -89,12 +91,13 @@ impl PgType {
     }
 
     /// Return the string representation of this type
-    pub fn as_str(self) -> &'static str {
+    pub fn as_str(self, as_array: bool) -> &'static str {
         match self {
             // abstime 	AbsoluteTime 	utils/nabstime.h
             PgType::AbsoluteTime => "abstime",
             // bigint (int8) 	int64 	postgres.h
             PgType::BigInt => "bigint",
+            PgType::Int8 if as_array => "int8[]",
             PgType::Int8 => "int8",
             // boolean 	bool 	postgres.h (maybe compiler built-in)
             PgType::Boolean => "boolean",
@@ -112,17 +115,21 @@ impl PgType {
             PgType::Date => "date",
             // smallint (int2) 	int16 	postgres.h
             PgType::SmallInt => "smallint",
+            PgType::Int2 if as_array => "int2[]",
             PgType::Int2 => "int2",
             // int2vector 	int2vector* 	postgres.h
             PgType::Int2Vector => "int2vector",
             // integer (int4) 	int32 	postgres.h
             PgType::Integer => "integer",
+            PgType::Int4 if as_array => "int4[]",
             PgType::Int4 => "int4",
             // real (float4) 	float4* 	postgres.h
             PgType::Real => "real",
+            PgType::Float4 if as_array => "float4[]",
             PgType::Float4 => "float4",
             // double precision (float8) 	float8* 	postgres.h
             PgType::DoublePrecision => "double precision",
+            PgType::Float8 if as_array => "float8[]",
             PgType::Float8 => "float8",
             // interval 	Interval* 	datatype/timestamp.h
             PgType::Interval => "interval",
@@ -164,8 +171,8 @@ impl PgType {
     }
 
     /// Return the String to be used for the RETURNS statement in SQL
-    pub fn return_stmt(self) -> String {
-        format!("RETURNS {}", self.as_str())
+    pub fn return_stmt(self, as_array: bool) -> String {
+        format!("RETURNS {}", self.as_str(as_array))
     }
 }
 
@@ -174,7 +181,25 @@ pub trait PgTypeInfo {
     /// return the Postgres type
     fn pg_type() -> PgType;
     /// for distinguishing optional and non-optional arguments
-    fn is_option() -> bool { false }
+    fn is_option() -> bool {
+        false
+    }
+    /// for distinguishing array argsuments
+    fn is_array() -> bool {
+        false
+    }
+}
+
+impl PgTypeInfo for f32 {
+    fn pg_type() -> PgType {
+        PgType::Float4
+    }
+}
+
+impl PgTypeInfo for f64 {
+    fn pg_type() -> PgType {
+        PgType::Float8
+    }
 }
 
 impl PgTypeInfo for i16 {
@@ -213,10 +238,34 @@ impl PgTypeInfo for () {
     }
 }
 
-impl<T> PgTypeInfo for Option<T> where T: PgTypeInfo {
+impl<T> PgTypeInfo for Option<T>
+where
+    T: PgTypeInfo,
+{
     fn pg_type() -> PgType {
         T::pg_type()
     }
 
-    fn is_option() -> bool { true }
+    fn is_option() -> bool {
+        true
+    }
+}
+
+impl PgTypeInfo for Text<'_> {
+    fn pg_type() -> PgType {
+        PgType::Text
+    }
+}
+
+impl<T> PgTypeInfo for &[T]
+where
+    T: PgTypeInfo,
+{
+    fn pg_type() -> PgType {
+        T::pg_type()
+    }
+
+    fn is_array() -> bool {
+        true
+    }
 }

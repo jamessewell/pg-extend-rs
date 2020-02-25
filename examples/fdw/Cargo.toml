@@ -4,9 +4,6 @@ version = "0.1.0"
 authors = ["Ellie Frost <web@stillinbeta.com>"]
 edition = "2018"
 
-[features]
-pg_allocator = []
-
 [lib]
 crate-type = ["cdylib"]
 
@@ -16,4 +13,4 @@ path = "src/bin.rs"
 
 [dependencies]
 pg-extern-attr = { version = "*", path = "../../pg-extern-attr" }
-pg-extend = { version = "*", path = "../../pg-extend" }
+pg-extend = { version = "*", path = "../../pg-extend", features = ["fdw"] }
