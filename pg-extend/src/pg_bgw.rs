@@ -110,7 +110,7 @@ impl BackgroundWorker {
             bgw_notify_pid: self.bgw_notify_pid,
         };
 
-        crate::guard_pg(|| unsafe { pg_sys::RegisterBackgroundWorker(&mut bgw) });
+        unsafe { crate::guard_pg(|| pg_sys::RegisterBackgroundWorker(&mut bgw) ); }
     }
 }
 

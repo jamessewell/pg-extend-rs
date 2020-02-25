@@ -7,7 +7,6 @@
 
 //! Postgres extension library for Rust.
 #![warn(missing_docs)]
-
 #[macro_use]
 extern crate bitflags;
 
@@ -24,10 +23,9 @@ pub mod pg_datum;
 pub mod pg_error;
 pub mod pg_fdw;
 pub mod pg_type;
+pub mod pg_bgw;
 
-#[macro_use]
 pub mod log;
-//pub mod pg_bgw;
 pub mod native;
 
 /// A macro for marking a library compatible with the Postgres extension framework.
@@ -167,7 +165,7 @@ cfg_if::cfg_if! {
 /// See the man pages for info on setjmp http://man7.org/linux/man-pages/man3/setjmp.3.html
 #[cfg(unix)]
 #[inline(never)]
-pub fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
+pub(crate) unsafe fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
     // setup the check protection
     let original_exception_stack: *mut pg_sys::sigjmp_buf = pg_sys::PG_exception_stack;
     let mut local_exception_stack: mem::MaybeUninit<pg_sys::sigjmp_buf> =
@@ -181,9 +179,7 @@ pub fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
 
     if jumped != 0 {
         notice!("PG longjmped: {}", jumped);
-        unsafe {
-            pg_sys::PG_exception_stack = original_exception_stack;
-        }
+        pg_sys::PG_exception_stack = original_exception_stack;
 
         // The C Panicked!, handling control to Rust Panic handler
         compiler_fence(Ordering::SeqCst);
@@ -240,9 +236,7 @@ pub(crate) unsafe fn guard_pg<R, F: FnOnce() -> R>(f: F) -> R {
     let result = f();
 
     compiler_fence(Ordering::SeqCst);
-    unsafe {
-        pg_sys::PG_exception_stack = original_exception_stack;
-    }
+    pg_sys::PG_exception_stack = original_exception_stack;
 
     result
 }
