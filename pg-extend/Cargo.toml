@@ -17,7 +17,7 @@ license = "MIT/Apache-2.0"
 build = "build.rs"
 
 [features]
-default = ["postgres-11"]
+default = ["postgres-10"]
 postgres-9 = []
 postgres-10 = []
 postgres-11 = []

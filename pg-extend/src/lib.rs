@@ -25,7 +25,7 @@ pub mod pg_error;
 
 #[macro_use]
 pub mod log;
-pub mod pg_bgw;
+//pub mod pg_bgw;
 pub mod pg_fdw;
 
 
