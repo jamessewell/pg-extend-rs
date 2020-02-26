@@ -1,6 +1,8 @@
 // Functions for implementing a BGWorker
 use crate::log::Level;
 use crate::{error, pg_datum, pg_sys, pg_type, warn};
+use std::time::Duration;
+use std::convert::TryInto;
 
 pub static mut prev_shmem_startup_hook: Option<unsafe extern "C" fn()> = None;
 
@@ -49,6 +51,11 @@ impl BackgroundWorker {
         }
     }
 
+    pub fn set_name(mut self: Self, input: &str) -> Self {
+        self.bgw_name = input.to_string();
+        self
+    }
+
     pub fn set_type(mut self: Self, input: &str) -> Self {
         self.bgw_type = input.to_string();
         self
@@ -95,7 +102,6 @@ impl BackgroundWorker {
     }
 
 
-
     pub fn load(self: Self) {
         let mut bgw = pg_sys::BackgroundWorker {
             bgw_name: RpgffiChar96::from(&self.bgw_name[..]).0,
@@ -114,7 +120,11 @@ impl BackgroundWorker {
     }
 }
 
-pub fn wait_latch(timeout: i64) -> i32 {
+pub fn worker_wait( timeout: Duration) {
+    wait_latch(timeout.as_millis().try_into().unwrap()) & pg_sys::WL_POSTMASTER_DEATH as i32 == 0; 
+}
+
+fn wait_latch(timeout: i64) -> i32 {
     unsafe {
         let latch = pg_sys::WaitLatch(
             pg_sys::MyLatch,

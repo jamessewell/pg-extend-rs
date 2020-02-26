@@ -569,6 +569,7 @@ fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
         pub extern "C" fn #func_wrapper_name () {
             use std::panic;
             use pg_extend::pg_alloc::PgAllocator;
+            use pg_extend::pg_sys;
 
             // All params will be in the "current" memory context at the call-site
             let memory_context = PgAllocator::current_context();
@@ -594,7 +595,6 @@ fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
                 }
                 // this is the meat of the function call into the extension code
                 #func_name();
-                while pg_extend::pg_bgw::wait_latch(10000) & pg_sys::WL_POSTMASTER_DEATH as i32 == 0 {};
 
             });
 
