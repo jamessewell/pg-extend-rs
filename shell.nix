@@ -11,13 +11,14 @@ in
   name = "rust";
   nativeBuildInputs = [
     buildPackages.postgresql_11
+    buildPackages.rust-bindgen
     buildPackages.cargo-edit
     buildPackages.openssl
     buildPackages.clang
     buildPackages.llvmPackages.libclang
     buildPackages.llvmPackages.libcxxStdenv
     ((buildPackages.rustChannelOf channel ).rust.override { 
-        extensions = [
+      extensions = [
           "rustfmt-preview"
           "clippy-preview"
 	  "rls-preview"

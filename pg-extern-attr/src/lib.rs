@@ -517,7 +517,6 @@ pub fn pg_foreignwrapper(
     proc_macro::TokenStream::from(expanded)
 }
 
-
 fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
     let func = if let syn::Item::Fn(func) = item {
         &func.sig
@@ -533,111 +532,29 @@ fn impl_info_for_bgw(item: &syn::Item) -> TokenStream {
 
     let inputs = &func.inputs;
     let output = &func.output;
+    if !inputs.is_empty() {
+        panic!("init functions must have no inputs")
+    };
 
     if *output != syn::ReturnType::Default {
-        panic!("bgw functions must have no output")
-    }
-
-    // TODO: actually a 1 argument version must be a Datum
-    if inputs.len() >= 2 {
-        panic!("bgw functions must have 0 or 1 arguments")
-    }
+        panic!("init functions must have no output")
+    };
 
     // declare the function
     let mut function = TokenStream::default();
 
     let func_wrapper_name = syn::Ident::new(&format!("bgw_{}", func_name), Span::call_site());
-    let func_info = get_info_fn(&func_wrapper_name);
-    // join the function information in
-    function.extend(func_info);
-
-    let arg_types = get_arg_types(inputs);
-    let (get_args_from_datums, has_pg_allocator) = extract_arg_data(&arg_types);
-    // remove the optional Rust arguments from the sql argument count
-    let num_sql_args = if has_pg_allocator {
-        arg_types.len() - 1
-    } else {
-        arg_types.len()
-    };
-
-    let func_params = create_function_params(num_sql_args, has_pg_allocator);
 
     // wrap the original function in a pg_wrapper function
     let func_wrapper = quote_spanned!( func_name.span() =>
-        #[no_mangle]
-        #[allow(unused_variables, unused_mut, clippy::suspicious_else_formatting, clippy::unit_arg, clippy::let_unit_value)]
-        pub extern "C" fn #func_wrapper_name () {
-            use std::panic;
-            use pg_extend::pg_alloc::PgAllocator;
-            use pg_extend::pg_sys;
-
-            // All params will be in the "current" memory context at the call-site
-            let memory_context = PgAllocator::current_context();
-/*
-            let func_info = unsafe {
-                func_call_info
-                    .as_mut()
-                    .expect("func_call_info was unexpectedly NULL")
-            };
-            */
-
-            // guard the Postgres process against the panic, and give us an oportunity to cleanup
-            let panic_result = panic::catch_unwind(|| {
-                // extract the argument list
-                //let mut args = pg_extend::get_args(func_info);
-
-                // arbitrary Datum conversions occur here, and could panic
-                //   so this is inside the catch unwind
-                #get_args_from_datums
-
-                unsafe {
-                  pg_sys::BackgroundWorkerUnblockSignals();
-                }
+    #[no_mangle]
+    #[allow(unused_variables, unused_mut, clippy::suspicious_else_formatting, clippy::unit_arg, clippy::let_unit_value)]
+    pub extern "C" fn #func_wrapper_name () {
+                unsafe { pg_sys::BackgroundWorkerUnblockSignals(); }
                 // this is the meat of the function call into the extension code
                 #func_name();
 
-            });
-
-            // see if we caught a panic
-            match panic_result {
-                Ok(result) => {
-                    // in addition to the null case, we should handle result types probably
-                    /*
-                    let isnull: pg_extend::pg_bool::Bool = result.is_null().into();
-                    func_info.isnull = isnull.into();
-
-                    // return the datum
-                    unsafe {
-                        result.into_datum()
-                    }
-                    */
-                }
-                Err(err) => {
-                    use std::sync::atomic::compiler_fence;
-                    use std::sync::atomic::Ordering;
-                    use pg_extend::error;
-
-                    // ensure the return value is null
-                    //func_info.isnull = pg_extend::pg_bool::Bool::from(true).into();
-
-                    // The Rust code paniced, we need to recover to Postgres via a longjump
-                    //   A postgres logging error of Error will do this for us.
-                    compiler_fence(Ordering::SeqCst);
-                    if let Some(msg) = err.downcast_ref::<&'static str>() {
-                        error!("panic executing Rust '{}': {}", stringify!(#func_name), msg);
-                    }
-
-                    if let Some(msg) = err.downcast_ref::<String>() {
-                        error!("panic executing Rust '{}': {}", stringify!(#func_name), msg);
-                    }
-
-                    error!("panic executing Rust '{}'", stringify!(#func_name));
-
-                    unreachable!("log should have longjmped above, this is a bug in pg-extend-rs");
-                }
-            }
-        }
-    );
+    });
 
     function.extend(func_wrapper);
 
@@ -694,75 +611,12 @@ fn impl_info_for_init(item: &syn::Item) -> TokenStream {
 
     // wrap the original function in a pg_wrapper function
     let func_wrapper = quote_spanned!( func_name.span() =>
-        #[no_mangle]
-        #[allow(unused_variables, unused_mut, clippy::suspicious_else_formatting, clippy::unit_arg, clippy::let_unit_value)]
-        pub extern "C" fn #func_wrapper_name () {
-            use std::panic;
-            use pg_extend::pg_alloc::PgAllocator;
+    #[no_mangle]
+    #[allow(unused_variables, unused_mut, clippy::suspicious_else_formatting, clippy::unit_arg, clippy::let_unit_value)]
+    pub extern "C" fn #func_wrapper_name () {
+            #func_name();
 
-            // All params will be in the "current" memory context at the call-site
-            let memory_context = PgAllocator::current_context();
-/*
-            let func_info = unsafe {
-                func_call_info
-                    .as_mut()
-                    .expect("func_call_info was unexpectedly NULL")
-            };
-            */
-
-            // guard the Postgres process against the panic, and give us an oportunity to cleanup
-            let panic_result = panic::catch_unwind(|| {
-                // extract the argument list
-                //let mut args = pg_extend::get_args(func_info);
-
-                // arbitrary Datum conversions occur here, and could panic
-                //   so this is inside the catch unwind
-
-                // this is the meat of the function call into the extension code
-                #func_name();
-
-            });
-
-            // see if we caught a panic
-            match panic_result {
-                Ok(result) => {
-                    // in addition to the null case, we should handle result types probably
-                    /*
-                    let isnull: pg_extend::pg_bool::Bool = result.is_null().into();
-                    func_info.isnull = isnull.into();
-
-                    // return the datum
-                    unsafe {
-                        result.into_datum()
-                    }
-                    */
-                }
-                Err(err) => {
-                    use std::sync::atomic::compiler_fence;
-                    use std::sync::atomic::Ordering;
-                    use pg_extend::error;
-
-                    // ensure the return value is null
-                    //func_info.isnull = pg_extend::pg_bool::Bool::from(true).into();
-
-                    // The Rust code paniced, we need to recover to Postgres via a longjump
-                    //   A postgres logging error of Error will do this for us.
-                    compiler_fence(Ordering::SeqCst);
-                    if let Some(msg) = err.downcast_ref::<&'static str>() {
-                        error!("panic executing Rust '{}': {}", stringify!(#func_name), msg);
-                    }
-
-                    if let Some(msg) = err.downcast_ref::<String>() {
-                        error!("panic executing Rust '{}': {}", stringify!(#func_name), msg);
-                    }
-
-                    error!("panic executing Rust '{}'", stringify!(#func_name));
-
-                    unreachable!("log should have longjmped above, this is a bug in pg-extend-rs");
-                }
-            }
-        }
-    );
+    });
 
     function.extend(func_wrapper);
 

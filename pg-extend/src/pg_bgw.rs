@@ -1,8 +1,8 @@
 // Functions for implementing a BGWorker
 use crate::log::Level;
 use crate::{error, pg_datum, pg_sys, pg_type, warn};
-use std::time::Duration;
 use std::convert::TryInto;
+use std::time::Duration;
 
 pub static mut prev_shmem_startup_hook: Option<unsafe extern "C" fn()> = None;
 
@@ -17,10 +17,10 @@ bitflags! {
 pub enum BgWorkerStartTime {
     PostmasterStart = 0,
     ConsistentState = 1,
-    RecoveryFinished = 2
+    RecoveryFinished = 2,
 }
 
-const BGW_NEVER_RESTART:i32 = -1;
+const BGW_NEVER_RESTART: i32 = -1;
 
 pub struct BackgroundWorker {
     bgw_name: String,
@@ -101,7 +101,6 @@ impl BackgroundWorker {
         self
     }
 
-
     pub fn load(self: Self) {
         let mut bgw = pg_sys::BackgroundWorker {
             bgw_name: RpgffiChar96::from(&self.bgw_name[..]).0,
@@ -116,12 +115,18 @@ impl BackgroundWorker {
             bgw_notify_pid: self.bgw_notify_pid,
         };
 
-        unsafe { crate::guard_pg(|| pg_sys::RegisterBackgroundWorker(&mut bgw) ); }
+        unsafe {
+            crate::guard_pg(|| pg_sys::RegisterBackgroundWorker(&mut bgw));
+        }
     }
 }
 
-pub fn worker_wait( timeout: Duration) {
-    wait_latch(timeout.as_millis().try_into().unwrap()) & pg_sys::WL_POSTMASTER_DEATH as i32 == 0; 
+pub fn worker_wait(timeout: Duration) {
+    wait_latch(timeout.as_millis().try_into().unwrap());
+}
+
+pub fn worker_continue() -> bool {
+    pg_sys::WL_POSTMASTER_DEATH as i32 != 0
 }
 
 fn wait_latch(timeout: i64) -> i32 {
